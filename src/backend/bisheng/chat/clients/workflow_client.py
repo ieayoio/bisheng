@@ -1,16 +1,18 @@
 import json
 from typing import Dict
 
+from fastapi import Request, WebSocket
+from loguru import logger
+
 from bisheng.api.services.user_service import UserPayload
 from bisheng.api.v1.schemas import ChatResponse
 from bisheng.chat.clients.base import BaseClient
 from bisheng.chat.clients.workflow_callback import WorkflowWsCallback
 from bisheng.chat.types import WorkType
 from bisheng.database.models.message import ChatMessageDao, ChatMessage, ChatMessageType
+from bisheng.settings import settings
 from bisheng.workflow.common.workflow import WorkflowStatus
 from bisheng.workflow.graph.workflow import Workflow
-from fastapi import Request, WebSocket
-from loguru import logger
 
 
 class WorkflowClient(BaseClient):
@@ -28,6 +30,9 @@ class WorkflowClient(BaseClient):
                                            user_id=self.user_id)
 
     async def save_chat_message(self, chat_response: ChatResponse) -> int | None:
+        if not self.chat_id:
+            return
+
         message = ChatMessageDao.insert_one(ChatMessage(**{
             'user_id': self.user_id,
             'chat_id': self.chat_id,
@@ -36,11 +41,19 @@ class WorkflowClient(BaseClient):
 
             'is_bot': chat_response.is_bot,
             'source': chat_response.source,
-            'message': json.dumps(chat_response.message, ensure_ascii=False),
+            'message': chat_response.message if isinstance(chat_response.message, str) else json.dumps(
+                chat_response.message, ensure_ascii=False
+            ),
             'extra': chat_response.extra,
             'category': chat_response.category,
         }))
         return message.id
+
+    async def update_chat_message(self, message_id: int, message: dict | str):
+        db_message = ChatMessageDao.get_message_by_id(message_id)
+        if db_message:
+            db_message.message = message if isinstance(message, str) else json.dumps(message)
+            ChatMessageDao.update_message_model(db_message)
 
     async def _handle_message(self, message: Dict[any, any]):
         logger.debug('----------------------------- start handle message -----------------------')
@@ -55,9 +68,10 @@ class WorkflowClient(BaseClient):
     async def init_workflow(self, workflow_data: dict):
         if self.workflow is not None:
             return
-        # todo max_steps and timeout 放到系统配置内
+        workflow_conf = settings.get_workflow_conf()
         await self.send_response('processing', 'begin', '')
-        self.workflow = Workflow(self.client_id, str(self.user_id), workflow_data, 50, 60,
+        self.workflow = Workflow(self.client_id, str(self.user_id), workflow_data, workflow_conf.max_steps,
+                                 workflow_conf.timeout,
                                  self.callback)
         logger.debug('init workflow over')
         # 运行workflow
@@ -79,13 +93,18 @@ class WorkflowClient(BaseClient):
         for node_id, node_info in data.items():
             user_input[node_id] = node_info['data']
             # 保存用户输入到历史记录
-            await self.save_chat_message(ChatResponse(message=node_info['message'],
-                                                      category=node_info['category'],
-                                                      is_bot=False,
-                                                      type='end',
-                                                      flow_id=self.client_id,
-                                                      chat_id=self.chat_id,
-                                                      user_id=self.user_id,))
+            if node_info.get('message_id'):
+                # 更新聊天消息
+                await self.update_chat_message(node_info['message_id'], node_info['message'])
+            else:
+                # 插入新的聊天消息
+                await self.save_chat_message(ChatResponse(message=node_info['message'],
+                                                          category='question',
+                                                          is_bot=False,
+                                                          type='end',
+                                                          flow_id=self.client_id,
+                                                          chat_id=self.chat_id,
+                                                          user_id=self.user_id))
         if not self.workflow:
             logger.warning('workflow is over')
             return

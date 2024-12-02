@@ -45,7 +45,6 @@ class GraphState(BaseModel):
         if node_id not in self.variables_pool:
             return None
 
-        # todo 某些特殊变量的处理 chat_history、source_document等
         if key == 'chat_history':
             return self.get_history_memory(count=count)
         return self.variables_pool[node_id].get(key)
@@ -71,6 +70,14 @@ class GraphState(BaseModel):
             return variable_val[variable_val_index]
 
         return variable_val
+
+    def set_variable_by_str(self, contact_key: str, value: Any):
+        tmp_list = contact_key.split('.', 1)
+        node_id = tmp_list[0]
+        var_key = tmp_list[1]
+        if var_key.find('#') != -1:
+            var_key, variable_val_index = var_key.split('#')
+        self.set_variable(node_id, var_key, value)
 
     def get_all_variables(self) -> Dict[str, Any]:
         """ 获取所有的变量，key为node_id.key的格式 """

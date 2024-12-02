@@ -5,6 +5,7 @@ from contextvars import copy_context
 from typing import Any, Callable, Coroutine, List, cast
 
 from bisheng.api.v1.schemas import ChatResponse
+from bisheng.chat.utils import sync_judge_source, sync_process_source_document
 from bisheng.database.models.message import ChatMessageDao, ChatMessage, ChatMessageType
 from bisheng.workflow.callback.base_callback import BaseCallback
 from bisheng.workflow.callback.event import (GuideQuestionData, GuideWordData, NodeEndData,
@@ -57,12 +58,23 @@ class WorkflowWsCallback(BaseCallback):
                                  copy_context().run), _run_coros,
                             [self.websocket.send_json(chat_response.dict())]).result()
 
-    def save_chat_message(self, chat_response: ChatResponse) -> int | None:
+    def save_chat_message(self, chat_response: ChatResponse, source_documents=None) -> int | None:
         """  save chat message to database
         return message id
         """
         if not self.chat_id:
             return
+
+        # 判断溯源
+        if source_documents:
+            result = {}
+            extra = {}
+            if len(source_documents) == 1:
+                result = source_documents[0]
+            source, result = sync_judge_source(result, source_documents, self.chat_id, extra)
+            chat_response.source = source
+            chat_response.extra = json.dumps(extra, ensure_ascii=False)
+
         message = ChatMessageDao.insert_one(ChatMessage(
             user_id=self.user_id,
             chat_id=self.chat_id,
@@ -75,6 +87,11 @@ class WorkflowWsCallback(BaseCallback):
             extra=chat_response.extra,
             category=chat_response.category,
         ))
+
+        # 如果是文档溯源，处理召回的chunk
+        if chat_response.source not in [0, 4]:
+            sync_process_source_document(source_documents, self.chat_id, message.id, chat_response.message.get('msg'))
+
         return message.id
 
     def on_node_start(self, data: NodeStartData):
@@ -129,14 +146,14 @@ class WorkflowWsCallback(BaseCallback):
 
     def on_output_msg(self, data: OutputMsgData):
         print(f'output msg: {data}')
-        chat_response = ChatResponse(message=data.dict(),
+        chat_response = ChatResponse(message=data.dict(exclude={'source_documents'}),
                                      category='output_msg',
                                      extra='',
                                      type='over',
                                      flow_id=self.workflow_id,
                                      chat_id=self.chat_id,
                                      files=data.files)
-        msg_id = self.save_chat_message(chat_response)
+        msg_id = self.save_chat_message(chat_response, source_documents=data.source_documents)
         if msg_id:
             chat_response.message_id = msg_id
         self.send_chat_response(chat_response)
@@ -153,35 +170,41 @@ class WorkflowWsCallback(BaseCallback):
 
     def on_stream_over(self, data: StreamMsgOverData):
         print(f'stream over: {data}')
-        chat_response = ChatResponse(message=data.dict(),
+        chat_response = ChatResponse(message=data.dict(exclude={'source_documents'}),
                                      category='stream_msg',
                                      extra='',
                                      type='end',
                                      flow_id=self.workflow_id,
                                      chat_id=self.chat_id)
-        msg_id = self.save_chat_message(chat_response)
+        msg_id = self.save_chat_message(chat_response, source_documents=data.source_documents)
         if msg_id:
             chat_response.message_id = msg_id
         self.send_chat_response(chat_response)
 
     def on_output_choose(self, data: OutputMsgChooseData):
         print(f'output choose: {data}')
-        chat_response = ChatResponse(message=data.dict(),
+        chat_response = ChatResponse(message=data.dict(exclude={'source_documents'}),
                                      category='output_choose_msg',
                                      extra='',
                                      type='over',
                                      flow_id=self.workflow_id,
                                      chat_id=self.chat_id,
                                      files=data.files)
+        msg_id = self.save_chat_message(chat_response, source_documents=data.source_documents)
+        if msg_id:
+            chat_response.message_id = msg_id
         self.send_chat_response(chat_response)
 
     def on_output_input(self, data: OutputMsgInputData):
         print(f'output input: {data}')
-        chat_response = ChatResponse(message=data.dict(),
+        chat_response = ChatResponse(message=data.dict(exclude={'source_documents'}),
                                      category='output_input_msg',
                                      extra='',
                                      type='over',
                                      flow_id=self.workflow_id,
                                      chat_id=self.chat_id,
                                      files=data.files)
+        msg_id = self.save_chat_message(chat_response, source_documents=data.source_documents)
+        if msg_id:
+            chat_response.message_id = msg_id
         self.send_chat_response(chat_response)
