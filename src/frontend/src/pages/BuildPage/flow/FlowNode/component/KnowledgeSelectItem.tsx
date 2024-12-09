@@ -134,7 +134,7 @@ export default function KnowledgeSelectItem({ data, onChange, onValidate }) {
             hideSearch={tabType === KnowledgeType.Temp}
             value={value}
             options={tabType === KnowledgeType.Knowledge ? options : fileOptions}
-            placeholder={data.help || ''}
+            placeholder={data.placeholder || ''}
             searchPlaceholder={t('build.searchBaseName')}
             onChange={handleSelect}
             onLoad={() => reload(1, '')}
