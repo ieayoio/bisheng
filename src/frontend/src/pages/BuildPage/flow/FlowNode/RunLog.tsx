@@ -64,7 +64,7 @@ const Log = ({ type, name, data }) => {
 
 export default function RunLog({ node, children }) {
     const [state, setState] = useState<Status>(Status.normal)
-    const [data, setData] = useState<any[]>([])
+    const [data, setData] = useState<any>({})
 
     // 订阅日志事件
     useEffect(() => {
@@ -72,8 +72,27 @@ export default function RunLog({ node, children }) {
             const { nodeId, action, data } = e.detail
             if (nodeId !== node.id && nodeId !== '*') return
 
+            if (data && Object.keys(data).length) {
+                let result = {};
+                let hasKeys = []
+
+                node.group_params.forEach(group => {
+                    group.params.forEach(param => {
+                        if (data[param.key] !== undefined) {
+                            result[param.label] = data[param.key];
+                            hasKeys.push(param.key)
+                        }
+                    });
+                });
+
+                for (let key in data) {
+                    if (!hasKeys.includes(key)) {
+                        result[key] = data[key];
+                    }
+                }
+                setData(result)
+            }
             setState(action)
-            setData(data)
         }
         window.addEventListener('nodeLogEvent', onNodeLogEvent)
         return () => {
