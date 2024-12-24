@@ -46,8 +46,7 @@ class RedisCallback(BaseCallback):
     def set_workflow_status(self, status: int, reason: str = None):
         self.redis_client.set(self.workflow_status_key,
                               {'status': status, 'reason': reason, 'time': time.time()},
-                              expiration=self.workflow_expire_time)
-        self.workflow_cache.clear()
+                              expiration=None)
         if status in [WorkflowStatus.FAILED.value, WorkflowStatus.SUCCESS.value]:
             # 消息事件和状态key可能还需要消费
             self.redis_client.delete(self.workflow_data_key)
@@ -59,6 +58,9 @@ class RedisCallback(BaseCallback):
         workflow_status = self.redis_client.get(self.workflow_status_key)
         self.workflow_cache.setdefault(self.workflow_status_key, workflow_status)
         return workflow_status
+
+    def clear_workflow_status(self):
+        self.redis_client.delete(self.workflow_status_key)
 
     def insert_workflow_response(self, event: dict):
         self.redis_client.rpush(self.workflow_event_key, json.dumps(event), expiration=self.workflow_expire_time)
@@ -159,12 +161,15 @@ class RedisCallback(BaseCallback):
     def on_user_input(self, data: UserInputData):
         """ user input event """
         logger.debug(f'user input: {data}')
-        self.send_chat_response(
-            ChatResponse(message=data.dict(),
-                         category='user_input',
-                         type='over',
-                         flow_id=self.workflow_id,
-                         chat_id=self.chat_id))
+        chat_response = ChatResponse(message=data.dict(),
+                                     category='user_input',
+                                     type='over',
+                                     flow_id=self.workflow_id,
+                                     chat_id=self.chat_id)
+        msg_id = self.save_chat_message(chat_response)
+        if msg_id:
+            chat_response.message_id = msg_id
+        self.send_chat_response(chat_response)
 
     def on_guide_word(self, data: GuideWordData):
         """ guide word event """
