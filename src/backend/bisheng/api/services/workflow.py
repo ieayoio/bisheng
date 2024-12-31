@@ -112,16 +112,16 @@ class WorkFlowService(BaseService):
             node.handle_input({
                 'code_input': [
                     {
-                        'key': k.split('.')[1],
+                        'key': k,
                         'value': v,
                         'type': 'input'
                     }for k, v in node_input.items()
                 ]
             })
-        elif node_data.type ==  NodeType.TOOL.value:
+        elif node_data.type == NodeType.TOOL.value:
             user_input = {}
             for k, v in node_input.items():
-                user_input[k] = v
+                user_input[k.split('.')[1]] = v
             node.handle_input(user_input)
         else:
             for key, val in node_input.items():
