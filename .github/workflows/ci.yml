@@ -30,10 +30,10 @@ jobs:
         run: echo "RELEASE_VERSION=${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_ENV
 
       # 构建 bisheng_langchain
-      - name: Set python version 3.8
+      - name: Set python version 3.10
         uses: actions/setup-python@v1
         with:
-          python-version: 3.8
+          python-version: 3.10.15
 
       - name: Build PyPi bisheng-langchain and push
         id: pypi_build_bisheng_langchain
@@ -91,17 +91,6 @@ jobs:
         uses: snok/install-poetry@v1
         with:
           installer-parallel: true
-      - name: build lock
-        run: | 
-          cd ./src/backend
-          pip install bisheng_langchain==$RELEASE_VERSION
-          poetry lock
-          # 安装 nltk
-          pip install nltk
-          python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger'); nltk.download('averaged_perceptron_tagger_eng'); "
-          mv /home/runner/nltk_data ./
-          cd ../../
-
       - name: Build backend and push
         id: docker_build_backend
         uses: docker/build-push-action@v2
