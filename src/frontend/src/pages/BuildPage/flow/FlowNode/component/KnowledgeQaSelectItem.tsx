@@ -1,12 +1,14 @@
 import { Label } from "@/components/bs-ui/label";
 import MultiSelect from "@/components/bs-ui/select/multi";
-import { readFileLibDatabase } from "@/controllers/API";
+import { getKnowledgeDetailApi, readFileLibDatabase } from "@/controllers/API";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import useFlowStore from "../../flowStore";
 
 
-export default function KnowledgeQaSelectItem({ data, onChange, onValidate }) {
+export default function KnowledgeQaSelectItem({ nodeId, data, onChange, onValidate, onVarEvent }) {
     const { t } = useTranslation()
+    const { flow } = useFlowStore()
     const [value, setValue] = useState<any>(() => data.value.map(el => {
         return { label: el.label, value: el.key }
     }))
@@ -47,14 +49,43 @@ export default function KnowledgeQaSelectItem({ data, onChange, onValidate }) {
         data.required && onValidate(() => {
             if (!data.value.length) {
                 setError(true)
-                return data.label + '不可为空'
+                return data.label + ' ' + t('required')
+            }
+            if (data.value.some(item => /input_[a-zA-Z0-9]+\.file/.test(item.key))) {
+                return 'input_file'
             }
             setError(false)
             return false
         })
-        
-        return () => onValidate(() => {})
+
+        return () => onValidate(() => { })
     }, [data.value])
+
+    // 校验变量是否可用
+    const [errorKeys, setErrorKeys] = useState<string[]>([])
+    const validateVarAvailble = async () => {
+        if (!value.length) return ''
+        let error = '';
+        const _errorKeys = [];
+        const effectiveKnowledges = await getKnowledgeDetailApi(value.map(el => el.value));
+        for (const el of value) {
+            // If not found, check against effectiveKnowledges
+            if (!effectiveKnowledges.some(base => base.id === el.value)) {
+                error = t('nodeErrorMessage', {
+                    ns: 'flow',
+                    nodeName: flow.nodes.find(node => node.id === nodeId).data.name,
+                    varNameCn: ''
+                });
+            }
+            error && _errorKeys.push(el.value);
+            setErrorKeys(_errorKeys);
+            return error;
+        }
+    };
+    useEffect(() => {
+        onVarEvent && onVarEvent(validateVarAvailble);
+        return () => onVarEvent && onVarEvent(() => { });
+    }, [data, value]);
 
     return <div className='node-item mb-4'>
         <Label className="flex items-center bisheng-label mb-2">
@@ -64,6 +95,7 @@ export default function KnowledgeQaSelectItem({ data, onChange, onValidate }) {
         <MultiSelect
             id="knowledge-qaselect"
             error={error}
+            errorKeys={errorKeys}
             multiple
             className={''}
             value={value}

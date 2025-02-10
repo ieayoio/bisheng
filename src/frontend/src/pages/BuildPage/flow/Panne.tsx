@@ -1,7 +1,7 @@
 import ApiMainPage from "@/components/bs-comp/apiComponent";
 import { generateUUID } from "@/components/bs-ui/utils";
 import { WorkFlow, WorkflowNode } from "@/types/flow";
-import { autoNodeName, initNode, useCopyPasteNode } from "@/util/flowUtils";
+import { autoNodeName, filterUselessFlow, initNode, useCopyPasteNode } from "@/util/flowUtils";
 import { useUndoRedo } from "@/util/hook";
 import { Background, BackgroundVariant, Connection, Controls, ReactFlow, addEdge, applyEdgeChanges, applyNodeChanges, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
@@ -13,6 +13,7 @@ import FlowNode from "./FlowNode";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
 import useFlowStore from "./flowStore";
+import { copyReportTemplate } from "@/controllers/API/workflow";
 
 // 自定义组件
 const nodeTypes = { flowNode: FlowNode };
@@ -98,7 +99,10 @@ export default function Panne({ flow, preFlow }: { flow: WorkFlow, preFlow: stri
                     }, 500); // after init
                 }
             }} />
-            <main className="h-full flex flex-1 bg-gray-50" ref={keyBoardPanneRef}>
+            <main
+                className="h-full flex flex-1 bg-gray-50"
+                tabIndex={-1}
+                ref={keyBoardPanneRef}>
                 <div className="size-full" ref={reactFlowWrapper}>
                     <div className="size-full">
                         <ReactFlow
@@ -198,7 +202,14 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
     const onConnect = useCallback(
         (params: Connection) => {
             takeSnapshot()
+            let _nodes = []
+            setNodes((x) => {
+                _nodes = x
+                return cloneDeep(x)
+            });
             setEdges((eds) => {
+                // 校验
+                const _eds = filterUselessFlow(_nodes, eds)
                 return addEdge(
                     {
                         ...params,
@@ -207,10 +218,9 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
                         // className: 'stroke-foreground stroke-connection',
                         animated: true
                     },
-                    eds
+                    _eds
                 )
             });
-            setNodes((x) => cloneDeep(x));
         },
         [setEdges, setNodes, takeSnapshot]
     );
@@ -315,8 +325,12 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
             // let edges = _reactFlowInstance.getEdges();
             const newNodes = nodeIds.map(nodeId => {
                 const node = nodes.find(n => n.id === nodeId);
-                const newNodeId = `${node.type}_${generateUUID(5)}`
+                const newNodeId = `${node.data.type}_${generateUUID(5)}`
                 // node.id = nodeId
+                // id替换
+                const data = JSON.parse(JSON.stringify(node.data).replaceAll(nodeId, newNodeId))
+                // 复制报告节点中报告模板
+                copyReportTemplate(data)
                 return {
                     id: newNodeId,
                     type: "flowNode",
@@ -325,7 +339,7 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
                         y: node.position.y + 100,
                     },
                     data: {
-                        ...cloneDeep(node.data),
+                        ...data,
                         id: newNodeId,
                     },
                     selected: false
@@ -390,11 +404,18 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
             ]);
         }
 
+        // 删除输出节点连线
+        const handleDelOutputEdge = (event) => {
+            const { nodeId } = event.detail;
+            setEdges((eds) => eds.filter((ns) => ns.source !== nodeId));
+        }
+
         // 监听自定义事件
         window.addEventListener('nodeUpdate', handleNodeUpdate);
         window.addEventListener('nodeDelete', handleNodeDelete);
         window.addEventListener('nodeCopy', handleCopy);
         window.addEventListener('addNodeByHandle', handleAddNode);
+        window.addEventListener('outputDelEdge', handleDelOutputEdge);
 
         // 在组件卸载时移除事件监听
         return () => {
@@ -402,6 +423,7 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
             window.addEventListener('nodeDelete', handleNodeDelete);
             window.removeEventListener('nodeCopy', handleCopy);
             window.removeEventListener('addNodeByHandle', handleAddNode);
+            window.addEventListener('outputDelEdge', handleDelOutputEdge);
         };
     }, [_reactFlowInstance]);
 
@@ -426,13 +448,16 @@ const useKeyBoard = (_reactFlowInstance, reactFlowWrapper) => {
         if (newSelectNode.nodes.some(node => node.data.type === 'start')) return
         let bounds = reactFlowWrapper.current.getBoundingClientRect();
         setNodes((nds) => {
+            // TODO 合并到复制节点方法
             const newNodes = newSelectNode.nodes.map(node => {
-                const newNode = cloneDeep(node)
-                const nodeId = `${newNode.data.type}_${generateUUID(5)}`
+                const nodeId = `${node.data.type}_${generateUUID(5)}`
+                const newNode = JSON.parse(JSON.stringify(node).replaceAll(node.id, nodeId))
                 newNode.id = nodeId
                 newNode.data.id = nodeId
                 const newName = autoNodeName(nds, newNode.data.name)
                 newNode.data.name = newName
+                // 复制报告节点中报告模板
+                copyReportTemplate(newNode.data)
                 // newNode.selected = false
 
                 newNode.position = _reactFlowInstance.screenToFlowPosition({

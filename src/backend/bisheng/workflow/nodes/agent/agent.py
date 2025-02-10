@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 from bisheng.api.services.assistant_agent import AssistantAgent
 from bisheng.api.services.llm import LLMService
-from bisheng.chat.clients.llm_callback import LLMNodeCallbackHandler
+from bisheng.workflow.callback.llm_callback import LLMNodeCallbackHandler
 from bisheng.database.models.knowledge import KnowledgeDao, Knowledge
 from bisheng.interface.importing.utils import import_vectorstore
 from bisheng.interface.initialize.loading import instantiate_vectorstore
@@ -35,7 +35,7 @@ class AgentNode(BaseNode):
         self._user_prompt = PromptTemplateParser(template=self.node_params['user_prompt'])
         self._user_variables = self._user_prompt.extract()
 
-        self._batch_variable_list = {}
+        self._batch_variable_list = []
         self._system_prompt_list = []
         self._user_prompt_list = []
         self._tool_invoke_list = []
@@ -46,7 +46,8 @@ class AgentNode(BaseNode):
 
         self._llm = LLMService.get_bisheng_llm(model_id=self.node_params['model_id'],
                                                temperature=self.node_params.get(
-                                                   'temperature', 0.3))
+                                                   'temperature', 0.3),
+                                               cache=False)
 
         # 是否输出结果给用户
         self._output_user = self.node_params.get('output_user', False)
@@ -133,9 +134,10 @@ class AgentNode(BaseNode):
                 vector_client = self.init_knowledge_milvus(knowledge_info)
                 es_client = self.init_knowledge_es(knowledge_info)
             else:
-                file_metadata = self.graph_state.get_variable_by_str(f'{knowledge_id}_file_metadata')
+                file_metadata = self.get_other_node_variable(knowledge_id)
                 if not file_metadata:
-                    raise Exception(f'未找到对应的临时文件数据：{knowledge_id}')
+                    # 没有上传文件，则不去检索
+                    continue
 
                 name = f'{knowledge_id.replace(".", "").replace("#", "")}_knowledge_{index}'
                 description = f'{file_metadata.get("source")}:{file_metadata.get("title")}'
@@ -174,7 +176,7 @@ class AgentNode(BaseNode):
             raise Exception('没有配置默认的embedding模型')
         file_ids = [file_metadata['file_id']]
         params = {
-            'collection_name': self.tmp_collection_name,
+            'collection_name': self.get_milvus_collection_name(getattr(embeddings, 'model_id')),
             'partition_key': self.workflow_id,
             'embedding': embeddings,
             'metadata_expr': f'file_id in {file_ids}'
@@ -212,27 +214,30 @@ class AgentNode(BaseNode):
         ret = {}
         variable_map = {}
 
-        self._batch_variable_list = {}
+        self._batch_variable_list = []
         self._system_prompt_list = []
         self._user_prompt_list = []
         self._tool_invoke_list = []
 
         for one in self._system_variables:
-            variable_map[one] = self.graph_state.get_variable_by_str(one)
+            variable_map[one] = self.get_other_node_variable(one)
         system_prompt = self._system_prompt.format(variable_map)
         self._system_prompt_list.append(system_prompt)
         self._init_agent(system_prompt)
 
         if self._tab == 'single':
-            ret['output'] = self._run_once(None, unique_id, 'output')
+            self._tool_invoke_list.append([])
+            ret['output'] = self._run_once(None, unique_id, 'output', self._tool_invoke_list[0])
             self.callback_manager.on_stream_over(StreamMsgOverData(node_id=self.id,
                                                                    msg=ret['output'],
                                                                    unique_id=unique_id,
                                                                    output_key='output'))
         else:
             for index, one in enumerate(self.node_params['batch_variable']):
+                self._batch_variable_list.append(self.get_other_node_variable(one))
                 output_key = self.node_params['output'][index]['key']
-                ret[output_key] = self._run_once(one, unique_id, output_key)
+                self._tool_invoke_list.append([])
+                ret[output_key] = self._run_once(one, unique_id, output_key, self._tool_invoke_list[index])
                 self.callback_manager.on_stream_over(StreamMsgOverData(node_id=self.id,
                                                                        msg=ret[output_key],
                                                                        unique_id=unique_id,
@@ -249,31 +254,39 @@ class AgentNode(BaseNode):
 
     def parse_log(self, unique_id: str, result: dict) -> Any:
         ret = []
-        if self._batch_variable_list:
-            ret.append({"key": "batch_variable", "value": self._batch_variable_list, "type": "params"})
+        index = 0
+        for k, v in result.items():
+            one_ret = [
+                {"key": "system_prompt", "value": self._system_prompt_list[0], "type": "params"},
+                {"key": "user_prompt", "value": self._user_prompt_list[index], "type": "params"},
+            ]
+            if self._batch_variable_list:
+                one_ret.insert(0, {"key": "batch_variable", "value": self._batch_variable_list[index], "type": "params"})
 
-        ret.extend([
-            {"key": "system_prompt", "value": self._system_prompt_list, "type": "params"},
-            {"key": "user_prompt", "value": self._user_prompt_list, "type": "params"},
-        ])
+            # 处理工具调用日志
+            one_ret.extend(self.parse_tool_log(self._tool_invoke_list[index]))
+            one_ret.append({"key": f'{self.id}.{k}', "value": v, "type": "variable"})
+        return ret
+
+    def parse_tool_log(self, tool_invoke_list: list) -> list:
+        ret = []
         tool_invoke_info = {}
-        if self._tool_invoke_list:
-            for one in self._tool_invoke_list:
-                if one['run_id'] not in tool_invoke_info:
-                    tool_invoke_info[one['run_id']] = {}
-                if one['type'] == 'start':
-                    tool_invoke_info[one['run_id']].update({
-                        'name': one['name'],
-                        'input': one['input']
-                    })
-                elif one['type'] == 'end':
-                    tool_invoke_info[one['run_id']].update({
-                        'output': one['output']
-                    })
-                elif one['type'] == 'error':
-                    tool_invoke_info[one['run_id']].update({
-                        'output': f'Error: {one["error"]}'
-                    })
+        for one in tool_invoke_list:
+            if one['run_id'] not in tool_invoke_info:
+                tool_invoke_info[one['run_id']] = {}
+            if one['type'] == 'start':
+                tool_invoke_info[one['run_id']].update({
+                    'name': one['name'],
+                    'input': one['input']
+                })
+            elif one['type'] == 'end':
+                tool_invoke_info[one['run_id']].update({
+                    'output': one['output']
+                })
+            elif one['type'] == 'error':
+                tool_invoke_info[one['run_id']].update({
+                    'output': f'Error: {one["error"]}'
+                })
         if tool_invoke_info:
             for one in tool_invoke_info.values():
                 ret.append({
@@ -281,31 +294,28 @@ class AgentNode(BaseNode):
                     "value": f"Tool Input:\n {one['input']}, Tool Output:\n {one['output']}",
                     "type": "tool"
                 })
-        ret.extend([{"key": f'{self.id}.{k}', "value": v, "type": "variable"} for k, v in result.items()])
         return ret
 
-    def _run_once(self, input_variable: str = None, unique_id: str = None, output_key: str = None):
+    def _run_once(self, input_variable: str = None, unique_id: str = None, output_key: str = None, tool_invoke_list: list = None):
         """
-        input_variable: 输入变量，如果是batch，则需要传入一个list，否则为None
+        input_variable: 输入变量，如果是batch，则需要传入一个变量的key，否则为None
         """
         # 说明是引用了批处理的变量, 需要把变量的值替换为用户选择的变量
         special_variable = f'{self.id}.batch_variable'
         variable_map = {}
         for one in self._system_variables:
             if input_variable and one == special_variable:
-                variable_map[one] = self.graph_state.get_variable_by_str(input_variable)
-                self._batch_variable_list[input_variable] = variable_map[one]
+                variable_map[one] = self.get_other_node_variable(input_variable)
                 continue
-            variable_map[one] = self.graph_state.get_variable_by_str(one)
+            variable_map[one] = self.get_other_node_variable(one)
         # system = self._system_prompt.format(variable_map)
 
         variable_map = {}
         for one in self._user_variables:
             if input_variable and one == special_variable:
-                variable_map[one] = self.graph_state.get_variable_by_str(input_variable)
-                self._batch_variable_list[input_variable] = variable_map[one]
+                variable_map[one] = self.get_other_node_variable(input_variable)
                 continue
-            variable_map[one] = self.graph_state.get_variable_by_str(one)
+            variable_map[one] = self.get_other_node_variable(one)
         user = self._user_prompt.format(variable_map)
         self._user_prompt_list.append(user)
 
@@ -318,7 +328,7 @@ class AgentNode(BaseNode):
                                               node_id=self.id,
                                               output=self._output_user,
                                               output_key=output_key,
-                                              tool_list=self._tool_invoke_list,
+                                              tool_list=tool_invoke_list,
                                               cancel_llm_end=True)
         config = RunnableConfig(callbacks=[llm_callback])
 

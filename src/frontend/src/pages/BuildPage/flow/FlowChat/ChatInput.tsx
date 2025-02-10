@@ -12,6 +12,7 @@ import { RefreshCw } from "lucide-react";
 import GuideQuestions from "./GuideQuestions";
 import InputForm from "./InputForm";
 import { useMessageStore } from "./messageStore";
+import useFlowStore from "../flowStore";
 
 export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, onLoad }) {
     const { toast } = useToast()
@@ -21,6 +22,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
     const [inputLock, setInputLock] = useState({ locked: true, reason: '' })
     const questionsRef = useRef(null)
     const inputNodeIdRef = useRef('') // 当前输入框节点id
+    const messageIdRef = useRef('') // 当前输入框节点messageId
     const [inputForm, setInputForm] = useState(null) // input表单
 
     const [showWhenLocked, setShowWhenLocked] = useState(false) // 强制开启表单按钮，不限制于input锁定
@@ -104,7 +106,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
             msg: value,
             category: "question",
             extra: '',
-            message_id: '',
+            message_id: messageIdRef.current,
             source: 0
         })
         // msg to store
@@ -131,7 +133,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
                 [inputNodeIdRef.current]: {
                     data,
                     message: msg,
-                    message_id: '',
+                    message_id: messageIdRef.current,
                     category: 'question',
                     extra: '',
                     source: 0
@@ -232,6 +234,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
         })
     }
 
+    const setRunCache = useFlowStore(state => state.setRunCache)
     // 接受 ws 消息
     const handleWsMessage = (data) => {
         if (data.category === 'error') {
@@ -242,61 +245,37 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
             });
         }
         if (data.category === 'node_run') {
+            // 缓存运行结果,用于[单节点运行]自动填写参数
+            if (data.type === 'end' && data.message.input_data) {
+                setRunCache(data.message.node_id
+                    , data.message.input_data)
+            }
             insetNodeRun(data)
             return sendNodeLogEvent(data)
         }
-        if (data.category === 'user_input') {
+        // 
+        if (data.category === "guide_word") {
+            data.message.msg = data.message.guide_word
+        }
+        // if (data.category === 'user_input') {
+        if (data.category === 'input') {
             const { node_id, input_schema } = data.message
             inputNodeIdRef.current = node_id
+            messageIdRef.current = data.message_id
             // 待用户输入
-            input_schema.tab === 'form' ? setInputForm(input_schema) : setInputLock({ locked: false, reason: '' })
+            input_schema.tab === 'form_input' ? setInputForm(input_schema) : setInputLock({ locked: false, reason: '' })
             return
         } else if (data.category === 'guide_question') {
-            return questionsRef.current.updateQuestions(data.message.filter(q => q))
+            return questionsRef.current.updateQuestions(data.message.guide_question.filter(q => q))
         } else if (data.category === 'stream_msg') {
             streamWsMsg(data)
         }
 
         if (data.type === 'close') {
-            insetSeparator('本轮会话已结束')
+            insetSeparator(t('chat.chatEndMessage'))
         } else if (data.type === 'over') {
             createWsMsg(data)
         }
-
-        // if (Array.isArray(data) && data.length) return
-        // if (data.type === 'start') {
-        //     msgClosedRef.current = false
-        //     // 非continue时，展示stop按钮
-        //     !continueRef.current && setStop({ show: true, disable: false })
-        //     createWsMsg(data)
-        // } else if (data.type === 'stream') {
-        //     //@ts-ignore
-        //     updateCurrentMessage({
-        //         chat_id: data.chat_id,
-        //         message: data.message,
-        //         thought: data.intermediate_steps
-        //     })
-        // } else if (['end', 'end_cover'].includes(data.type)) {
-        //     if (msgClosedRef.current && !['tool', 'flow', 'knowledge'].includes(data.category)) {
-        //         // 无未闭合的消息，先创建（补一条start）  工具类除外
-        //         console.log('重复end,新建消息 :>> ');
-        //         createWsMsg(data)
-        //     }
-        //     updateCurrentMessage({
-        //         ...data,
-        //         end: true,
-        //         thought: data.intermediate_steps || '',
-        //         messageId: data.message_id,
-        //         noAccess: false,
-        //         liked: 0,
-        //         update_time: formatDate(new Date(), 'yyyy-MM-ddTHH:mm:ss')
-        //     }, data.type === 'end_cover')
-
-        //     if (!msgClosedRef.current) msgClosedRef.current = true
-        // } else if (data.type === "close") {
-        //     setStop({ show: false, disable: false })
-        //     setInputLock({ locked: false, reason: '' })
-        // }
     }
 
     // 日志广播->nodes
@@ -307,7 +286,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
             detail: {
                 nodeId: node_id,
                 action: isError ? '' : data.type === 'start' ? 'loading' : 'success',
-                data: isError ? { 'error': data.message.reason } : data.message.log_data
+                data: isError ? { 'error': data.message.reason } : data.message.log_data // 缓存TODO
             }
         })
         window.dispatchEvent(event)
@@ -373,7 +352,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
     const handleRestartClick = () => {
         wsRef.current?.close()
         wsRef.current = null
-        stop.show && insetSeparator('本轮会话已结束')
+        stop.show && insetSeparator(t('chat.chatEndMessage'))
         setTimeout(() => {
             createWebSocket().then(() => {
                 sendWsMsg(onBeforSend('init_data', {}))
@@ -406,7 +385,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
                 {
                     form && <div
                         className={`w-6 h-6 rounded-sm hover:bg-gray-200 cursor-pointer flex justify-center items-center `}
-                        onClick={() => (showWhenLocked || !inputLock.locked) && setFormShow(!formShow)}
+                        // onClick={() => (showWhenLocked || !inputLock.locked) && setFormShow(!formShow)}
                     ><FormIcon className={!showWhenLocked && inputLock.locked ? 'text-muted-foreground' : 'text-foreground'}></FormIcon></div>
                 }
             </div>
@@ -446,7 +425,7 @@ export default function ChatInput({ autoRun, clear, form, wsUrl, onBeforSend, on
                 disabled={inputLock.locked}
                 onInput={handleTextAreaHeight}
                 placeholder={inputLock.locked ? inputLock.reason : t('chat.inputPlaceholder')}
-                className={"resize-none py-4 pr-10 text-md min-h-6 max-h-[200px] scrollbar-hide dark:bg-[#2A2B2E] text-gray-800" + (form && ' pl-10')}
+                className={"resize-none py-4 pr-10 text-md min-h-6 max-h-[200px] scrollbar-hide dark:bg-[#131415] text-gray-800" + (form && ' pl-10')}
                 onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                         event.preventDefault();

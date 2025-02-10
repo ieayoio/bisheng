@@ -3,6 +3,7 @@ import { getChatHistory } from '@/controllers/API';
 import { ChatMessageType } from '@/types/chat';
 import { WorkflowMessage } from '@/types/flow';
 import { formatDate } from '@/util/utils';
+import i18next from 'i18next';
 import cloneDeep from 'lodash-es/cloneDeep';
 import { create } from 'zustand';
 
@@ -54,7 +55,7 @@ const handleHistoryMsg = (data: any[]): ChatMessageType[] => {
         .replace(/\t/g, '\\t')                  // 转义制表符
         .replace(/'/g, '"');                    // 将单引号替换为双引号
 
-    return data.filter(item => ["question", "output_input_msg", "output_choose_msg", "stream_msg", "output_msg", "guide_question", "guide_word", "user_input", "node_run"].includes(item.category)).map(item => {
+    return data.filter(item => ["question", "output_with_input_msg", "output_with_choose_msg", "stream_msg", "output_msg", "guide_question", "guide_word", "input", "node_run"].includes(item.category)).map(item => {
         let { message, files, is_bot, intermediate_steps, category, ...other } = item
         try {
             message = message && message[0] === '{' ? JSON.parse(message) : message || ''
@@ -156,7 +157,7 @@ export const useMessageStore = create<State & Actions>((set, get) => ({
         }))
     },
     insetNodeRun(data) {
-        if (['input', 'output', 'condition'].includes(data.messages?.node_id.split('_'))) return
+        if (['output', 'condition'].includes(data.message?.node_id.split('_')[0])) return
         set((state) => {
             let newChat = cloneDeep(state.messages);
             const { category, flow_id, chat_id, files, is_bot, liked, message, receiver, type, source, user_id } = data
@@ -186,7 +187,7 @@ export const useMessageStore = create<State & Actions>((set, get) => ({
                 ...bsMsgItem,
                 category: 'separator',
                 message_id: generateUUID(8),
-                message: '本轮会话已结束',
+                message: i18next.t('chat.chatEndMessage', { ns: 'chat' }),
                 update_time: formatDate(new Date(), 'yyyy-MM-ddTHH:mm:ss')
             })
         }

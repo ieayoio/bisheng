@@ -1,5 +1,5 @@
 {
-  "title": "文擎毕昇",
+  "title": "BISHENG",
   "prompt": "提示",
   "login": {
     "slogen": "便捷、灵活、可靠的企业级大模型应用开发平台",
@@ -88,6 +88,7 @@
     "flowControl": "用户组整体流量控制",
     "AssistantFlowCtrl": "助手流量控制",
     "SkillFlowCtrl": "技能流量控制",
+    "flowCtrl": "工作流流量控制",
     "createdBy": "创建人",
     "flowCtrlStrategy": "流量控制策略",
     "limit": "有限制",
@@ -233,7 +234,8 @@
     "searchLabels": "搜索标签",
     "confirmed": "已确认",
     "confirm": "确认",
-    "runNewWorkflow": "运行新工作流"
+    "runNewWorkflow": "运行新工作流",
+    "chatEndMessage": "本轮会话已结束"
   },
   "model": {
     "modelManagement": "模型管理",
@@ -553,7 +555,15 @@
     "manageAppTemplates": "管理应用模板",
     "provideSceneTemplates": "我们提供场景模板供您使用和参考",
     "noPermissionToPublish": "您没有权限上线此{{type}}，请联系管理员上线。",
-    "manageYourApplications": "在此页面管理您的应用，对应用上下线、编辑等等"
+    "manageYourApplications": "在此页面管理您的应用，对应用上下线、编辑等等",
+    "workFlow": "工作流",
+    "skillName": "技能名称",
+    "pleaseFillIn": "请填写{{labelName}}名称",
+    "nameTooLong": "{{labelName}}名称过长，不要超过50字",
+    "addDescription": "加些描述能够快速让别人理解您创造的{{labelName}}",
+    "descriptionTooLong": "{{labelName}}描述不可超过 200 字",
+    "templateCreatedSuccessfully": "模板创建成功",
+    "workFlowName": "工作流名称"
   },
   "tools": {
     "addTool": "添加工具",
@@ -847,7 +857,9 @@
     "labeled": "已标注",
     "unnecessary": "无需标注",
     "previousChat": "上一条会话",
-    "nextChat": "下一条会话"
+    "nextChat": "下一条会话",
+    "selectPlaceholder": "请选择",
+    "searchAppsPlaceholder": "搜索应用名称"
   },
   "errors": {
     "10400": "助手不存在",
@@ -906,7 +918,8 @@
     "10930": "该问题已被标注过",
     "10527": "工作流等待用户输入超时",
     "10528": "{{type}}节点执行超过最大次数",
-    "10531": "{{type}}功能已升级,需删除后重新拖入"
+    "10531": "{{type}}功能已升级,需删除后重新拖入",
+    "10532": "工作流版本已升级,请联系创建者重新编排"
   },
   "all": "全部",
   "confirmButton": "确定",

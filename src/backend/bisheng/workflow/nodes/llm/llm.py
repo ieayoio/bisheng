@@ -1,7 +1,7 @@
 from typing import Any
 
 from bisheng.api.services.llm import LLMService
-from bisheng.chat.clients.llm_callback import LLMNodeCallbackHandler
+from bisheng.workflow.callback.llm_callback import LLMNodeCallbackHandler
 from bisheng.workflow.nodes.base import BaseNode
 from bisheng.workflow.nodes.prompt_template import PromptTemplateParser
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -27,7 +27,7 @@ class LLMNode(BaseNode):
         self._user_variables = self._user_prompt.extract()
         self._user_prompt_list = []
 
-        self._batch_variable_list = {}
+        self._batch_variable_list = []
 
         # 初始化llm对象
         self._stream = True
@@ -38,12 +38,13 @@ class LLMNode(BaseNode):
     def _run(self, unique_id: str):
         self._system_prompt_list = []
         self._user_prompt_list = []
-        self._batch_variable_list = {}
+        self._batch_variable_list = []
         result = {}
         if self._tab == 'single':
             result['output'] = self._run_once(None, unique_id, 'output')
         else:
             for index, one in enumerate(self.node_params['batch_variable']):
+                self._batch_variable_list.append(self.get_other_node_variable(one))
                 output_key = self.node_params['output'][index]['key']
                 result[output_key] = self._run_once(one, unique_id, output_key)
 
@@ -54,14 +55,18 @@ class LLMNode(BaseNode):
         return result
 
     def parse_log(self, unique_id: str, result: dict) -> Any:
-        ret = [
-            {"key": "system_prompt", "value": self._system_prompt_list, "type": "params"},
-            {"key": "user_prompt", "value": self._user_prompt_list, "type": "params"},
-        ]
-        if self._batch_variable_list:
-            ret.insert(0, {"key": "batch_variable", "value": self._batch_variable_list, "type": "params"})
+        ret = []
+        index = 0
         for k, v in result.items():
-            ret.append({"key": f'{self.id}.{k}', "value": v, "type": "variable"})
+            one_ret = [
+                {"key": "system_prompt", "value": self._system_prompt_list[index], "type": "params"},
+                {"key": "user_prompt", "value": self._user_prompt_list[index], "type": "params"},
+                {"key": f'{self.id}.{k}', "value": v, "type": "variable"}
+            ]
+            if self._batch_variable_list:
+                one_ret.insert(0, {"key": "batch_variable", "value": self._batch_variable_list[index], "type": "params"})
+            index += 1
+            ret.append(one_ret)
         return ret
 
     def _run_once(self,
@@ -73,20 +78,18 @@ class LLMNode(BaseNode):
         variable_map = {}
         for one in self._system_variables:
             if input_variable and one == special_variable:
-                variable_map[one] = self.graph_state.get_variable_by_str(input_variable)
-                self._batch_variable_list[input_variable] = variable_map[one]
+                variable_map[one] = self.get_other_node_variable(input_variable)
                 continue
-            variable_map[one] = self.graph_state.get_variable_by_str(one)
+            variable_map[one] = self.get_other_node_variable(one)
         system = self._system_prompt.format(variable_map)
         self._system_prompt_list.append(system)
 
         variable_map = {}
         for one in self._user_variables:
             if input_variable and one == special_variable:
-                variable_map[one] = self.graph_state.get_variable_by_str(input_variable)
-                self._batch_variable_list[input_variable] = variable_map[one]
+                variable_map[one] = self.get_other_node_variable(input_variable)
                 continue
-            variable_map[one] = self.graph_state.get_variable_by_str(one)
+            variable_map[one] = self.get_other_node_variable(one)
         user = self._user_prompt.format(variable_map)
         self._user_prompt_list.append(user)
 
@@ -98,9 +101,11 @@ class LLMNode(BaseNode):
                                               output=self._output_user,
                                               output_key=output_key)
         config = RunnableConfig(callbacks=[llm_callback])
+        inputs = []
+        if system:
+            inputs.append(SystemMessage(content=system))
+        inputs.append(HumanMessage(content=user))
 
-        result = self._llm.invoke([SystemMessage(content=system),
-                                   HumanMessage(content=user)],
-                                  config=config)
+        result = self._llm.invoke(inputs, config=config)
 
         return result.content

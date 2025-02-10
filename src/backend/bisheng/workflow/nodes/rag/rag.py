@@ -7,7 +7,7 @@ from langchain_core.prompts import (ChatPromptTemplate, HumanMessagePromptTempla
                                     SystemMessagePromptTemplate)
 
 from bisheng.api.services.llm import LLMService
-from bisheng.chat.clients.llm_callback import LLMRagNodeCallbackHandler
+from bisheng.workflow.callback.llm_callback import LLMRagNodeCallbackHandler
 from bisheng.chat.types import IgnoreException
 from bisheng.database.models.user import UserDao
 from bisheng.interface.importing.utils import import_vectorstore
@@ -48,7 +48,8 @@ class RagNode(BaseNode):
 
         self._llm = LLMService.get_bisheng_llm(model_id=self.node_params['model_id'],
                                                temperature=self.node_params.get(
-                                                   'temperature', 0.3))
+                                                   'temperature', 0.3),
+                                               cache=False)
 
         self._user_info = UserDao.get_user(int(self.user_id))
 
@@ -64,10 +65,14 @@ class RagNode(BaseNode):
         self._es = None
 
     def _run(self, unique_id: str):
+        self._log_source_documents = {}
+        self._log_system_prompt = []
+        self._log_user_prompt = []
+
         self.init_qa_prompt()
         self.init_milvus()
         self.init_es()
-        self._log_source_documents = {}
+
 
         retriever = BishengRetrievalQA.from_llm(
             llm=self._llm,
@@ -114,14 +119,13 @@ class RagNode(BaseNode):
         return ret
 
     def parse_log(self, unique_id: str, result: dict) -> Any:
-        output_keys = []
-        source_documents = []
-        for key, val in result.items():
-            output_keys.append({'key': f'{self.id}.{key}', 'value': val, 'type': 'variable'})
-            source_documents.append([one.page_content for one in self._log_source_documents[key]])
-
-        tmp_retrieved_result = json.dumps(source_documents, indent=2, ensure_ascii=False)
+        ret = []
+        index = 0
+        user_question_list = self.init_user_question()
+        # 判断检索结果是否超出一定的长度, 原因是ws发送的消息超过一定的长度会报错
+        source_documents = [one.page_content for one in self._log_source_documents.values()]
         tmp_retrieved_type = 'params'
+        tmp_retrieved_result = json.dumps(source_documents, indent=2, ensure_ascii=False)
         if len(tmp_retrieved_result.encode('utf-8')) >= 50 * 1024:  # 大于50kb的日志数据存文件
             tmp_retrieved_type = 'file'
             tmp_object_name = f'/workflow/source_document/{time.time()}.txt'
@@ -129,19 +133,24 @@ class RagNode(BaseNode):
             share_url = self._minio_client.get_share_link(tmp_object_name, self._minio_client.tmp_bucket)
             tmp_retrieved_result = self._minio_client.clear_minio_share_host(share_url)
 
-        ret = [
-            {'key': 'user_question', 'value': self.init_user_question(), "type": "params"},
-            {'key': 'retrieved_result', 'value': tmp_retrieved_result, "type": tmp_retrieved_type},
-            {'key': 'system_prompt', 'value': self._log_system_prompt, "type": "params"},
-            {'key': 'user_prompt', 'value': self._log_user_prompt, "type": "params"},
-        ]
-        ret.extend(output_keys)
+        for key, val in result.items():
+            if tmp_retrieved_type != 'file':
+                tmp_retrieved_result = json.dumps([one.page_content for one in self._log_source_documents[key]], indent=2, ensure_ascii=False)
+            one_ret =[
+                {'key': 'user_question', 'value': user_question_list[index], "type": "params"},
+                {'key': 'retrieved_result', 'value': tmp_retrieved_result, "type": tmp_retrieved_type},
+                {'key': 'system_prompt', 'value': self._log_system_prompt[0], "type": "params"},
+                {'key': 'user_prompt', 'value': self._log_user_prompt[0], "type": "params"},
+                {'key': f'{self.id}.{key}', 'value': val, 'type': 'variable'}
+            ]
+            index += 1
+            ret.append(one_ret)
         return ret
 
     def init_user_question(self) -> List[str]:
         ret = []
         for one in self.node_params['user_question']:
-            ret.append(self.graph_state.get_variable_by_str(one))
+            ret.append(self.get_other_node_variable(one))
         return ret
 
     def init_qa_prompt(self):
@@ -152,7 +161,7 @@ class RagNode(BaseNode):
             elif one == f'{self.id}.retrieved_result':
                 variable_map[one] = '$$context$$'
             else:
-                variable_map[one] = self.graph_state.get_variable_by_str(one)
+                variable_map[one] = self.get_other_node_variable(one)
         if variable_map.get(f'{self.id}.retrieved_result') is None:
             raise IgnoreException('用户提示词必须包含 retrieved_result 变量')
         user_prompt = self._user_prompt.format(variable_map)
@@ -163,7 +172,7 @@ class RagNode(BaseNode):
 
         variable_map = {}
         for one in self._system_variables:
-            variable_map[one] = self.graph_state.get_variable_by_str(one)
+            variable_map[one] = self.get_other_node_variable(one)
         system_prompt = self._system_prompt.format(variable_map)
         system_prompt.replace('{', '{{').replace('}', '}}')
         self._log_system_prompt.append(system_prompt)
@@ -190,16 +199,17 @@ class RagNode(BaseNode):
             embeddings = LLMService.get_knowledge_default_embedding()
             if not embeddings:
                 raise Exception('没有配置默认的embedding模型')
-            file_ids = []
+            file_ids = ["0"]
             for one in self._knowledge_value:
-                file_metadata = self.graph_state.get_variable_by_str(f'{one}_file_metadata')
+                file_metadata = self.get_other_node_variable(one)
                 if not file_metadata:
-                    raise Exception(f'未找到对应的临时文件数据：{one}')
+                    # 未找到对应的临时文件数据, 用户未上传文件
+                    continue
                 file_ids.append(file_metadata['file_id'])
             self._sort_chunks = len(file_ids) == 1
             node_type = 'Milvus'
             params = {
-                'collection_name': self.tmp_collection_name,
+                'collection_name': self.get_milvus_collection_name(getattr(embeddings, 'model_id')),
                 'partition_key': self.workflow_id,
                 'embedding': embeddings,
                 'metadata_expr': f'file_id in {file_ids}'
@@ -221,9 +231,11 @@ class RagNode(BaseNode):
                 '_is_check_auth': self._knowledge_auth
             }
         else:
-            file_ids = []
+            file_ids = ["0"]
             for one in self._knowledge_value:
-                file_metadata = self.graph_state.get_variable_by_str(f'{one}_file_metadata')
+                file_metadata = self.get_other_node_variable(one)
+                if not file_metadata:
+                    continue
                 file_ids.append(file_metadata['file_id'])
             node_type = 'ElasticKeywordsSearch'
             params = {

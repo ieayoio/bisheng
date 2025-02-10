@@ -1,9 +1,15 @@
+import { copyReportTemplate } from '@/controllers/API/workflow';
 import { WorkFlow } from '@/types/flow';
 import create from 'zustand';
 
 type State = {
     flow: WorkFlow
-    fitView: boolean
+    fitView: boolean,
+    runCache: {
+        [nodeId: string]: {
+            [key: string]: string
+        }
+    }
 }
 
 type Actions = {
@@ -11,15 +17,18 @@ type Actions = {
     uploadFlow: (file?: File) => void;
     setFitView: () => void;
     // updateNode: (id: string, data: any) => void;
+    setRunCache: (nodeId: string, keyInput: { key: string, value: string }) => void;
+    clearRunCache: () => void;
 }
 
 const useFlowStore = create<State & Actions & { notifications: Notification[]; addNotification: (notification: Notification) => void; clearNotifications: () => void }>((set) => ({
     flow: null,
     fitView: false,
+    runCache: {},
     notifications: [], // 消息队列
     setFlow: (newFlow) => set({ flow: newFlow }),
     setFitView: () => set((state) => ({ fitView: !state.fitView })),
-    uploadFlow(file?: File) {
+    uploadFlow(file?: File) { // 导入工作流
         const input = document.createElement("input");
         input.type = "file";
         input.accept = ".json";
@@ -28,6 +37,10 @@ const useFlowStore = create<State & Actions & { notifications: Notification[]; a
                 const currentfile = (e.target as HTMLInputElement).files[0];
                 currentfile.text().then((text) => {
                     let flow = JSON.parse(text);
+                    // 复制报告节点中报告模板
+                    flow.nodes.forEach((node) => {
+                        copyReportTemplate(node.data)
+                    })
                     set((state) => ({
                         flow: {
                             ...state.flow,
@@ -48,7 +61,17 @@ const useFlowStore = create<State & Actions & { notifications: Notification[]; a
             notifications: [...state.notifications, notification]
         })),
     // 清空消息队列
-    clearNotifications: () => set({ notifications: [] })
+    clearNotifications: () => set({ notifications: [] }),
+    // 运行缓存
+    setRunCache: (nodeId, keyInput) => {
+        set((state) => ({
+            runCache: {
+                ...state.runCache,
+                [nodeId]: keyInput
+            }
+        }));
+    },
+    clearRunCache: () => set({ runCache: {} })
 }));
 
 type Notification = {

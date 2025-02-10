@@ -87,6 +87,7 @@
     "flowControl": "Overall UserGroup Flow Control",
     "AssistantFlowCtrl": "Assistant Flow Control",
     "SkillFlowCtrl": "Skill Flow Control",
+    "flowCtrl": "workflow Flow Control",
     "createdBy": "CreatedBy",
     "flowCtrlStrategy": "Flow control strategy",
     "limit": "Limit",
@@ -237,7 +238,8 @@
     "searchLabels": "Search labels",
     "confirmed": "Confirmed",
     "confirm": "Confirm",
-    "runNewWorkflow": "Run New Workflow"
+    "runNewWorkflow": "Run New Workflow",
+    "chatEndMessage": "This chat has ended"
   },
   "model": {
     "modelManagement": "Model Management",
@@ -556,7 +558,15 @@
     "manageAppTemplates": "Manage Application Templates",
     "provideSceneTemplates": "We provide scene templates for you to use and reference",
     "noPermissionToPublish": "You do not have permission to publish this {{type}}, please contact the administrator to publish.",
-    "manageYourApplications": "Manage your applications on this page, including publishing, editing, etc."
+    "manageYourApplications": "Manage your applications on this page, including publishing, editing, etc.",
+    "workFlow": "Workflow",
+    "skillName": "Skill Name",
+    "pleaseFillIn": "Please fill in the {{labelName}} name",
+    "nameTooLong": "{{labelName}} name is too long, do not exceed 50 characters",
+    "addDescription": "Add some description to quickly let others understand your {{labelName}}",
+    "descriptionTooLong": "{{labelName}} description cannot exceed 200 characters",
+    "templateCreatedSuccessfully": "Template created successfully",
+    "workFlowName": "Workflow Name"
   },
   "tools": {
     "addTool": "Add Tool",
@@ -850,7 +860,9 @@
     "labeled": "Labeled",
     "unnecessary": "Unnecessary",
     "previousChat": "Previous Chat",
-    "nextChat": "Next Chat"
+    "nextChat": "Next Chat",
+    "selectPlaceholder": "Please select",
+    "searchAppsPlaceholder": "Search for apps"
   },
   "errors": {
     "10400": "Assistant does not exist",
@@ -909,7 +921,8 @@
     "10930": "This issue has been annotated",
     "10527": "Workflow waits for user input timeout",
     "10528": "{{type}}node execution exceeds maximum number of times",
-    "10531": "{{type}} has been upgraded. You need to delete it and drag it in again."
+    "10531": "{{type}} has been upgraded. You need to delete it and drag it in again.",
+    "10532": "The workflow version has been upgraded, please contact the creator to rearrange it"
   },
   "all": "All",
   "confirmButton": "Confirm",
